@@ -1,0 +1,310 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Motion Reel</title>
+<style>
+  html, body { margin: 0; background: #0b0b0c; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1280" height="720"></canvas>
+<script>
+const W = 1280, H = 720;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+const ORANGE = '#ff4d1f', DARK = '#0e0e10', LIGHT = '#efece6', INK = '#141414';
+const SANS = '"Inter", "Inter Display", sans-serif';
+const MONO = '"DejaVu Sans Mono", monospace';
+
+// ---------- helpers ----------
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+const easeInOutCubic = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const easeOutBack = t => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+const easeOutExpo = t => t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
+
+function bg(c) { ctx.fillStyle = c; ctx.fillRect(0, 0, W, H); }
+function font(w, s, f = SANS) { ctx.font = `${w} ${s}px ${f}`; }
+
+// HUD chrome shared by all scenes (corner ticks, labels, timecode)
+function hud(t, label, color = 'rgba(255,255,255,.45)') {
+  ctx.save();
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 1.5;
+  const m = 28, l = 14;
+  [[m, m, 1, 1], [W - m, m, -1, 1], [m, H - m, 1, -1], [W - m, H - m, -1, -1]].forEach(([x, y, sx, sy]) => {
+    ctx.beginPath(); ctx.moveTo(x, y + sy * l); ctx.lineTo(x, y); ctx.lineTo(x + sx * l, y); ctx.stroke();
+  });
+  font(500, 11, MONO);
+  ctx.textAlign = 'left'; ctx.fillText(label, m + 22, m + 12);
+  ctx.textAlign = 'right';
+  const fr = Math.floor(t * 30) % 30, s = Math.floor(t);
+  ctx.fillText(`00:00:${String(s).padStart(2, '0')}:${String(fr).padStart(2, '0')}`, W - m - 22, m + 12);
+  ctx.textAlign = 'left'; ctx.fillText('MOTION / 2026', m + 22, H - m - 4);
+  ctx.textAlign = 'right'; ctx.fillText('MADE WITH CODE', W - m - 22, H - m - 4);
+  ctx.restore();
+}
+
+// letters that rise in with stagger
+function staggerText(str, x, y, size, t, opts = {}) {
+  const { weight = 900, color = '#fff', stagger = .06, dur = .5, spacing = 0 } = opts;
+  font(weight, size);
+  const widths = [...str].map(ch => ctx.measureText(ch).width + spacing);
+  const total = widths.reduce((a, b) => a + b, 0) - spacing;
+  let cx = x - total / 2;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  [...str].forEach((ch, i) => {
+    const p = easeOutBack(prog(t, i * stagger, i * stagger + dur));
+    ctx.save();
+    ctx.beginPath(); ctx.rect(cx - 10, y - size * 1.05, widths[i] + 20, size * 1.3); ctx.clip();
+    ctx.fillStyle = typeof color === 'function' ? color(i) : color;
+    ctx.fillText(ch, cx, y + (1 - p) * size * 1.1);
+    ctx.restore();
+    cx += widths[i];
+  });
+}
+
+// ---------- scenes ----------
+// 1. easing curve being plotted
+function sceneCurve(t, d) {
+  bg(DARK);
+  const x0 = 380, y0 = 520, w = 520, h = 320;
+  ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 8; i++) {
+    ctx.beginPath(); ctx.moveTo(x0 + i * w / 8, y0); ctx.lineTo(x0 + i * w / 8, y0 - h); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x0, y0 - i * h / 8); ctx.lineTo(x0 + w, y0 - i * h / 8); ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(x0, y0 - h); ctx.lineTo(x0, y0); ctx.lineTo(x0 + w, y0); ctx.stroke();
+
+  const p = easeInOutCubic(prog(t, .2, 1.7));
+  ctx.strokeStyle = ORANGE; ctx.lineWidth = 4; ctx.lineCap = 'round';
+  ctx.beginPath();
+  const N = 120;
+  for (let i = 0; i <= N * p; i++) {
+    const u = i / N, v = easeInOutCubic(u);
+    const px = x0 + u * w, py = y0 - v * h;
+    i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+  }
+  ctx.stroke();
+  const v = easeInOutCubic(p);
+  const hx = x0 + p * w, hy = y0 - v * h;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(hx, hy, 7, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.setLineDash([4, 5]); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(hx, y0); ctx.lineTo(hx, hy); ctx.lineTo(x0, hy); ctx.stroke(); ctx.setLineDash([]);
+
+  font(500, 13, MONO); ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.textAlign = 'left';
+  ctx.fillText(`cubic-bezier(.65, 0, .35, 1)`, x0, y0 + 36);
+  ctx.textAlign = 'right';
+  ctx.fillText(`t=${p.toFixed(2)}  v=${v.toFixed(2)}`, x0 + w, y0 + 36);
+  hud(t, '01 — EASING');
+}
+
+// 2. CLAUDE staggered title
+function sceneClaude(t, d) {
+  bg(DARK);
+  const z = 1 + t * .03;
+  ctx.save(); ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.translate(-W / 2, -H / 2);
+  staggerText('CLAUDE', W / 2, H / 2 + 60, 170, t - .1, { color: '#f4f1ea', spacing: 8 });
+  const lp = easeOutExpo(prog(t, .7, 1.4));
+  ctx.fillStyle = ORANGE; ctx.fillRect(W / 2 - 300 * lp, H / 2 + 100, 600 * lp, 6);
+  ctx.restore();
+  hud(t, '02 — TYPE');
+}
+
+// 3. DESIGN on light with orange circle punch
+function sceneDesign(t, d) {
+  bg(LIGHT);
+  staggerText('DESIGN', W / 2, H / 2 + 65, 190, t, { color: INK, stagger: .05, dur: .45 });
+  const cp = easeOutBack(prog(t, .6, 1.1));
+  const cr = 70 * cp * (1 - easeInOutCubic(prog(t, 1.6, 2)));
+  ctx.fillStyle = ORANGE;
+  ctx.beginPath(); ctx.arc(W / 2 + 205, H / 2 - 5, cr, 0, Math.PI * 2); ctx.fill();
+  hud(t, '03 — FORM', 'rgba(0,0,0,.45)');
+}
+
+// 4. wave grid of plus signs / squares
+function sceneGrid(t, d) {
+  bg(DARK);
+  const cols = 22, rows = 12, gx = W / cols, gy = H / rows;
+  const intro = easeOutCubic(prog(t, 0, .5));
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    const cx = (i + .5) * gx, cy = (j + .5) * gy;
+    const dd = Math.hypot(i - cols / 2, j - rows / 2);
+    const wave = Math.sin(dd * .6 - t * 6) * .5 + .5;
+    const s = (6 + wave * 14) * intro;
+    const hot = wave > .6;
+    ctx.fillStyle = hot ? ORANGE : `rgba(255,255,255,${.25 + wave * .6})`;
+    if ((i + j) % 2 === 0) {
+      ctx.fillRect(cx - s / 2, cy - s / 6, s, s / 3);
+      ctx.fillRect(cx - s / 6, cy - s / 2, s / 3, s);
+    } else {
+      ctx.fillRect(cx - s / 2.4, cy - s / 2.4, s / 1.2, s / 1.2);
+    }
+  }
+  hud(t, '04 — SYSTEM');
+}
+
+// 5. isometric 3D field with orange bump
+function sceneIso(t, d) {
+  const g = ctx.createRadialGradient(W / 2, H / 2, 50, W / 2, H / 2, 700);
+  g.addColorStop(0, '#24262c'); g.addColorStop(1, '#0b0b0d');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const N = 18, cell = 26;
+  const rot = .5 + t * .15;
+  const iso = (x, y, z) => {
+    const rx = x * Math.cos(rot) - y * Math.sin(rot);
+    const ry = x * Math.sin(rot) + y * Math.cos(rot);
+    return [W / 2 + rx * 1.0, H / 2 + 40 + ry * .5 - z];
+  };
+  const cells = [];
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const x = (i - N / 2 + .5) * cell, y = (j - N / 2 + .5) * cell;
+    const r = Math.hypot(i - N / 2 + .5, j - N / 2 + .5);
+    const bump = Math.max(0, 1 - r / 6);
+    const h = 8 + bump * bump * 120 * (Math.sin(t * 3) * .3 + .8) * easeOutCubic(prog(t, 0, .8));
+    const depth = Math.sin(rot) * x + Math.cos(rot) * y;
+    cells.push({ x, y, h, bump, depth });
+  }
+  cells.sort((a, b) => a.depth - b.depth);
+  const s = cell * .46;
+  for (const c of cells) {
+    const top = [[-s, -s], [s, -s], [s, s], [-s, s]].map(([dx, dy]) => iso(c.x + dx, c.y + dy, c.h));
+    const bot = [[-s, -s], [s, -s], [s, s], [-s, s]].map(([dx, dy]) => iso(c.x + dx, c.y + dy, 0));
+    const hot = c.bump > .25;
+    const base = hot ? [255, 77 + (1 - c.bump) * 60, 31] : [225, 225, 230];
+    const shade = k => `rgb(${base.map(v => Math.round(v * k)).join(',')})`;
+    // two visible side faces
+    for (let k = 0; k < 4; k++) {
+      const a = k, b = (k + 1) % 4;
+      ctx.fillStyle = shade(.45 + .15 * k);
+      ctx.beginPath(); ctx.moveTo(...top[a]); ctx.lineTo(...top[b]); ctx.lineTo(...bot[b]); ctx.lineTo(...bot[a]); ctx.closePath(); ctx.fill();
+    }
+    ctx.fillStyle = shade(1);
+    ctx.beginPath(); top.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.closePath(); ctx.fill();
+  }
+  hud(t, '05 — DEPTH');
+}
+
+// 6. rotating halftone sphere
+function sceneHalftone(t, d) {
+  bg(LIGHT);
+  const R = 230, cx = W / 2 + 120, cy = H / 2, step = 11;
+  const L = [Math.cos(t * 1.4) * .7, -.5, .6]; // moving light
+  const ln = Math.hypot(...L); L[0] /= ln; L[1] /= ln; L[2] /= ln;
+  const grow = easeOutBack(prog(t, 0, .7));
+  ctx.fillStyle = INK;
+  for (let y = -R; y <= R; y += step) for (let x = -R; x <= R; x += step) {
+    const r2 = x * x + y * y;
+    if (r2 > R * R) continue;
+    const z = Math.sqrt(R * R - r2);
+    const lum = clamp((x * L[0] + y * L[1] + z * L[2]) / R);
+    const dot = (1 - lum) * step * .62 * grow;
+    if (dot < .4) continue;
+    ctx.beginPath(); ctx.arc(cx + x, cy + y, dot, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.textAlign = 'left';
+  staggerText('HALFTONE', 290, 130, 54, t - .2, { color: ORANGE, stagger: .03 });
+  font(500, 13, MONO); ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.textAlign = 'left';
+  ctx.fillText('dot = (1 − N·L) × cell', 100, 640);
+  hud(t, '06 — TEXTURE', 'rgba(0,0,0,.45)');
+}
+
+// 7. bar chart with counter
+function sceneBars(t, d) {
+  bg(DARK);
+  const n = 36, x0 = 160, w = 960, base = 580;
+  const p = easeOutCubic(prog(t, 0, 1.3));
+  for (let i = 0; i < n; i++) {
+    const v = (Math.sin(i * .55) * .35 + .55 + Math.sin(i * 1.7 + 1) * .18) * 340;
+    const lp = easeOutExpo(prog(t, i * .025, i * .025 + .8));
+    const h = v * lp;
+    const bw = w / n * .62;
+    ctx.fillStyle = i % 5 === 2 ? ORANGE : (i % 3 ? '#f4f1ea' : '#ff8a66');
+    ctx.fillRect(x0 + i * w / n, base - h, bw, h);
+  }
+  ctx.fillStyle = 'rgba(255,255,255,.4)'; ctx.fillRect(x0, base + 6, w, 1.5);
+  font(900, 96); ctx.fillStyle = ORANGE; ctx.textAlign = 'left';
+  ctx.fillText(Math.round(125 * p).toString(), x0, 170);
+  font(500, 13, MONO); ctx.fillStyle = 'rgba(255,255,255,.6)';
+  ctx.fillText('FRAMES / SECOND OF PURE CODE', x0 + 4, 196);
+  hud(t, '07 — DATA');
+}
+
+// 8. EVERY PIXEL IS CODE.
+function sceneManifesto(t, d) {
+  bg('#141416');
+  staggerText('EVERY PIXEL', W / 2, H / 2 - 10, 110, t, { color: '#f4f1ea', stagger: .035 });
+  staggerText('IS CODE.', W / 2, H / 2 + 115, 110, t - .35, { color: i => i === 7 ? '#f4f1ea' : ORANGE, stagger: .045 });
+  hud(t, '08 — MANIFESTO');
+}
+
+// 9. outro with radial burst
+function sceneOutro(t, d) {
+  const g = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, 650);
+  g.addColorStop(0, '#3a1a10'); g.addColorStop(1, '#0b0b0c');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const burst = prog(t, 0, 1.4);
+  for (let i = 0; i < 90; i++) {
+    const a = i * 2.39996, speed = .6 + (i * 37 % 10) / 10;
+    const r1 = 120 + burst * 900 * speed, r2 = r1 + 30 + speed * 50;
+    ctx.strokeStyle = i % 4 ? `rgba(255,255,255,${.6 * (1 - burst)})` : `rgba(255,77,31,${1 - burst})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(W / 2 + Math.cos(a) * r1, H / 2 + Math.sin(a) * r1);
+    ctx.lineTo(W / 2 + Math.cos(a) * r2, H / 2 + Math.sin(a) * r2); ctx.stroke();
+  }
+  const s = lerp(1.25, 1, easeOutExpo(prog(t, 0, .9)));
+  ctx.save(); ctx.translate(W / 2, H / 2); ctx.scale(s, s); ctx.translate(-W / 2, -H / 2);
+  ctx.globalAlpha = prog(t, 0, .25);
+  font(900, 150); ctx.textAlign = 'center'; ctx.fillStyle = '#f4f1ea';
+  ctx.fillText('CLAUDE', W / 2 - 20, H / 2 + 50);
+  const tw = ctx.measureText('CLAUDE').width;
+  ctx.fillStyle = ORANGE; ctx.fillText('.', W / 2 - 20 + tw / 2 + 22, H / 2 + 50);
+  ctx.restore();
+  ctx.globalAlpha = prog(t, .8, 1.3);
+  font(500, 14, MONO); ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.textAlign = 'center';
+  ctx.fillText('M O T I O N   D E S I G N   —   S H O W R E E L   2 0 2 6', W / 2, H / 2 + 110);
+  ctx.globalAlpha = 1;
+  hud(t, '09 — END');
+}
+
+// ---------- timeline ----------
+const SCENES = [
+  [sceneCurve, 2], [sceneClaude, 2], [sceneDesign, 2], [sceneGrid, 2], [sceneIso, 2],
+  [sceneHalftone, 2], [sceneBars, 2], [sceneManifesto, 2], [sceneOutro, 3],
+];
+const DURATION = SCENES.reduce((a, s) => a + s[1], 0);
+
+function render(T) {
+  let acc = 0;
+  for (const [fn, d] of SCENES) {
+    if (T < acc + d || fn === SCENES[SCENES.length - 1][0]) {
+      const t = T - acc;
+      ctx.save(); fn(t, d); ctx.restore();
+      // white flash at each cut
+      const f = 1 - prog(t, 0, .12);
+      if (acc > 0 && f > 0) { ctx.fillStyle = `rgba(255,255,255,${f * .5})`; ctx.fillRect(0, 0, W, H); }
+      // fade out at the very end
+      const fo = prog(T, DURATION - .5, DURATION);
+      if (fo > 0) { ctx.fillStyle = `rgba(0,0,0,${fo})`; ctx.fillRect(0, 0, W, H); }
+      return;
+    }
+    acc += d;
+  }
+}
+window.render = render;
+window.DURATION = DURATION;
+
+// live preview when opened in a browser
+if (!window.__RENDERING__) {
+  const t0 = performance.now();
+  (function loop() { render(((performance.now() - t0) / 1000) % DURATION); requestAnimationFrame(loop); })();
+}
+</script>
+</body>
+</html>
